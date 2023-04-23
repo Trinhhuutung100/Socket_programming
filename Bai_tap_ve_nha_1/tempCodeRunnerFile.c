@@ -1,0 +1,1 @@
+ // hoten[strlen(hoten)-1]="0";
