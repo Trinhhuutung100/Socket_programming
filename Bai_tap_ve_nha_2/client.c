@@ -47,7 +47,6 @@ int main() {
         if (FD_ISSET(client, &fdread))
         {
             ret = recv(client, buf, sizeof(buf), 0);
-            if(ret==0) break;
             buf[ret] = 0;
             printf("Received: %s\n", buf);
         }

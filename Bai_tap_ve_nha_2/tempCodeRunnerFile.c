@@ -1,1 +1,4 @@
-acc[1]
+  else
+                {
+                    send(clients, fail, sizeof(fail), 0);
+                }
