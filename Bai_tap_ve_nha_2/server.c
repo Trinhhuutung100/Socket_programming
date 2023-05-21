@@ -1,65 +1,64 @@
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <sys/types.h>
-    #include <sys/socket.h>
-    #include <unistd.h>
-    #include <netdb.h>
-    #include <arpa/inet.h>
-    #include <string.h>
-    #include <sys/select.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <sys/select.h>
 
-    void ResetString(char str[]){
-        for(int i=0; i<strlen(str); i++){
-            str[i] = 0;
-        }
-    }
-
-    int main()
-    {
+int main() 
+{
     int listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listener == -1)
+    {
+        perror("socket() failed");
+        return 1;
+    }
 
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(9000);
 
-    bind(listener, (struct sockaddr *)&addr, sizeof(addr));
+    if (bind(listener, (struct sockaddr *)&addr, sizeof(addr))) 
+    {
+        perror("bind() failed");
+        return 1;
+    }
 
-    listen(listener, 5);
+    if (listen(listener, 5)) 
+    {
+        perror("listen() failed");
+        return 1;
+    }
 
-    fd_set fdread;
-        
-    int clients[64];
-    char acc[64][20];
-    for(int i = 0; i< 65; i++) ResetString(acc[i]);
-    int num_clients = 0;  
+    fd_set fdread, fdtest;
+    
+    // Xóa tất cả socket trong tập fdread
+    FD_ZERO(&fdread);
+    
+    // Thêm socket listener vào tập fdread
+    FD_SET(listener, &fdread);
+
     char buf[256];
-    char clientNames[][20] = {"abc", "def", "ghi"};
-    int soten = sizeof(clientNames) / sizeof(clientNames[0]);
-    //for(int i = 0; i<soten; i++) printf("%s %d bytes ", clientNames[i], strlen(clientNames[i]));
-    char temp[20];
-    ResetString(temp);
-
+    struct timeval tv;
+    
+    int users[64];      // Mang socket client da dang nhap
+    char *user_ids[64]; // Mang id client da dang nhap
+    int num_users = 0;  // So luong client da dang nhap
 
     while (1)
     {
-        // Xóa tất cả socket trong tập fdread
-        FD_ZERO(&fdread);
+        fdtest = fdread;
 
-        // Thêm socket listener vào tập fdread
-        FD_SET(listener, &fdread);
-        int maxdp = listener + 1;
-
-        // Thêm các socket client vào tập fdread
-        for (int i = 0; i < num_clients; i++)
-        {
-            FD_SET(clients[i], &fdread);
-            if (maxdp < clients[i] + 1)
-                maxdp = clients[i] + 1;
-        }
+        // Thiet lap thoi gian cho
+        tv.tv_sec = 5;
+        tv.tv_usec = 0;
 
         // Chờ đến khi sự kiện xảy ra
-        int ret = select(maxdp, &fdread, NULL, NULL, NULL);
+        int ret = select(FD_SETSIZE, &fdtest, NULL, NULL, NULL);
 
         if (ret < 0)
         {
@@ -67,57 +66,101 @@
             return 1;
         }
 
-        // Kiểm tra sự kiện có yêu cầu kết nối
-        if (FD_ISSET(listener, &fdread))
+        if (ret == 0)
         {
-            int client = accept(listener, NULL, NULL);
-            printf("Ket noi moi: %d\n", client);
-            clients[num_clients++] = client;
+            printf("Timed out!!!\n");
+            continue;
         }
 
-        // Kiểm tra sự kiện có dữ liệu truyền đến socket client
-        for (int i = 0; i < num_clients; i++)
-            if (FD_ISSET(clients[i], &fdread))
+        for (int i = listener; i < FD_SETSIZE; i++)
+        {
+            if (FD_ISSET(i, &fdtest))
             {
-                ret = recv(clients[i], buf, sizeof(buf), 0);
-                if (ret <= 0)
+                if (i == listener)
                 {
-                    // TODO: Client đã ngắt kết nối, xóa client ra khỏi mảng
-                    if(strcmp(acc[i], temp) != 0) strcpy(clientNames[i], acc[i]);
-                    ResetString(acc[i]);
-                    continue;
+                    int client = accept(listener, NULL, NULL);
+                    if (client < FD_SETSIZE)
+                    {
+                        FD_SET(client, &fdread);
+                        printf("New client connected: %d\n", client);
+                    }
+                    else
+                    {
+                        // Dang co qua nhieu ket noi
+                        close(client);
+                    }
                 }
-                buf[ret-1] = 0 ;
+                else
+                {
+                    int ret = recv(i, buf, sizeof(buf), 0);
+                    if (ret <= 0)
+                    {
+                        FD_CLR(i, &fdread);
+                        close(i);
+                    }
+                    else
+                    {
+                        buf[ret] = 0;
+                        printf("Received from %d: %s\n", i, buf);
 
-                printf("Du lieu nhan tu %d: %s [%d bytes]\n", clients[i], buf, strlen(buf));
-                
-                if(strcmp(acc[i], temp) == 0){
-                    //printf("acc name hien tai (%s)\n", acc[i]);
-                    for(int j =0;j< soten; j++){
-                        int t = strcmp(buf, clientNames[j]);
-                        //printf("t %d\n", t);
-                        if( t == 0)  {
-                            char success[20];
-                            sprintf(success,"Client %d dang nhap thanh cong\n", clients[i]);
-                            send(clients[i], success, strlen(success), 0);
-                            printf("Client %d dang nhap thanh cong\n", clients[i]);
-                            strcpy(acc[i], clientNames[j]);
-                            ResetString(clientNames[j]);
-                            break;
+                        int client = i;
+
+                        // Kiem tra trang thai dang nhap
+                        int j = 0;
+                        for (; j < num_users; j++)
+                            if (users[j] == client)
+                                break;
+                        
+                        if (j == num_users) // Chua dang nhap
+                        {
+                            // Xu ly cu phap lenh dang nhap
+                            char cmd[32], id[32], tmp[32];
+                            ret = sscanf(buf, "%s%s%s", cmd, id, tmp);
+                            if (ret == 2)
+                            {
+                                if (strcmp(cmd, "client_id:") == 0)
+                                {
+                                    char *msg = "Dung cu phap. Hay nhap tin nhan de chuyen tiep.\n";
+                                    send(client, msg, strlen(msg), 0);
+
+                                    // Luu vao mang user
+                                    users[num_users] = client;
+                                    user_ids[num_users] = malloc(strlen(id) + 1);
+                                    strcpy(user_ids[num_users], id);
+                                    num_users++;
+                                }
+                                else
+                                {
+                                    char *msg = "Sai cu phap. Hay nhap lai.\n";
+                                    send(client, msg, strlen(msg), 0);
+                                }
+                            }
+                            else
+                            {
+                                char *msg = "Sai tham so. Hay nhap lai.\n";
+                                send(client, msg, strlen(msg), 0);
+                            }
+                        }
+                        else // Da dang nhap
+                        {
+                            // id: user_ids[j]
+                            // data: buf
+
+                            char sendbuf[256];
+
+                            strcpy(sendbuf, user_ids[j]);
+                            strcat(sendbuf, ": ");
+                            strcat(sendbuf, buf);
+
+                            // Forward du lieu cho cac user
+                            for (int k = 0; k < num_users; k++)
+                                if (users[k] != client)
+                                    send(users[k], sendbuf, strlen(sendbuf), 0);
                         }
                     }
-                    continue;
                 }
-
-                for (int j = 0; j < num_clients; j++){
-                    if(j==i) continue;
-                    if(strcmp(acc[j], temp) == 0) continue;
-                    char from[20];
-                    sprintf(from, "From %s : %s", acc[i], buf);
-                    send(clients[j], from, strlen(from), 0);
-                }
-
             }
+        }
     }
 
     close(listener);    
