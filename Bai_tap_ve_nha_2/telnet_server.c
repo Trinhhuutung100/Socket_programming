@@ -8,6 +8,12 @@
 #include <string.h>
 #include <sys/select.h>
 
+int users[64];
+int num_users = 0;
+
+void process_request(int client, char *buf);
+void remove_user(int client);
+
 int main() 
 {
     int listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -34,103 +40,156 @@ int main()
         return 1;
     }
 
-    fd_set fdread;
+    fd_set fdread, fdtest;
+    
+    // Xóa tất cả socket trong tập fdread
+    FD_ZERO(&fdread);
+    
+    // Thêm socket listener vào tập fdread
+    FD_SET(listener, &fdread);
 
-    char STC[] = "Name and Pass?\n";
-    char fail[] = "fail Name or Pass! Pls send again.\n";
-    char acc[] = "Logged in successfully.\n";
-    char buf1[128];
-    int client[64];
-    int num_clientnumber = 0;
-    FILE *f = fopen("user.txt", "rb");
     char buf[256];
-    fread(buf, 1, sizeof(buf), f);
-   // printf("buffer: %s\n", buf);
-
+    
     while (1)
     {
-        FD_ZERO(&fdread);
+        fdtest = fdread;
 
-        FD_SET(listener, &fdread);
+        // Chờ đến khi sự kiện xảy ra
+        int ret = select(FD_SETSIZE, &fdtest, NULL, NULL, NULL);
 
-        int max = listener + 1;
-
-        for (int i = 0; i < num_clientnumber; i++)
-        {
-            FD_SET(client[i], &fdread);
-            if(max < client[i] + 1) max = client[i] + 1;
-        }
- 
-        int ret = select(max, &fdread, NULL, NULL, NULL);
         if (ret < 0)
         {
             perror("select() failed");
             return 1;
         }
-         if (FD_ISSET(listener, &fdread))
-        {   
-            int clients = accept(listener, NULL, NULL);
-            printf("Ket noi moi: %d\n", clients);
-            char bufrecv[30];
-            while (1)
-            {   
-                char ID1[10];
-                char Name1[10];
-                char test[5];
-                send(clients, STC, sizeof(STC), 0);
-                int ret2 = recv(clients, bufrecv, sizeof(bufrecv), 0);
-                bufrecv[ret2] = 0;
-                int check = sscanf(bufrecv, "%s %s %s", ID1, Name1, test);
-                printf("bufrecv: %s\n", bufrecv);
-                if(strstr(buf, bufrecv) != NULL && check == 2) 
-                {   
-                    client[num_clientnumber++] = clients;
-                    send(clients, acc, sizeof(acc), 0);
-                    break;
+
+        for (int i = listener; i < FD_SETSIZE; i++)
+        {
+            if (FD_ISSET(i, &fdtest))
+            {
+                if (i == listener)
+                {
+                    int client = accept(listener, NULL, NULL);
+                    if (client < FD_SETSIZE)
+                    {
+                        remove_user(client);
+                        FD_SET(client, &fdread);
+                        printf("New client connected: %d\n", client);
+                    }
+                    else
+                    {
+                        // Dang co qua nhieu ket noi
+                        close(client);
+                    }
                 }
                 else
                 {
-                    send(clients, fail, sizeof(fail), 0);
-                }
-                
-            }
-            
-        }
-
-        for (int i = 0; i < num_clientnumber; i++)
-        {
-            if(FD_ISSET(client[i], &fdread)) {
-                int ret1 = recv(client[i], buf1, sizeof(buf1), 0);
-                if (ret1 <= 0)
-                {
-                    continue;
-                }
-                buf1[ret1] = 0;
-                printf("Du lieu nhan tu %d: %s\n", client[i], buf1);
-                if(strncmp(buf1, "dir", 3) == 0) {
-                    //printf("Du lieu\n");
-                    system("dir > out.txt");
-                    FILE *fs = fopen("out.txt", "rb");
-                    char bufsend[256];
-                    int ret;
-                    while (!feof(fs))
+                    int ret = recv(i, buf, sizeof(buf), 0);
+                    if (ret <= 0)
                     {
-                        ret = fread(bufsend, 1, sizeof(bufsend), fs);
-                        if (ret <= 0)
-                            break;
-                        send(client[i], bufsend, ret, 0);
+                        FD_CLR(i, &fdread);
+                        close(i);
                     }
-                    fclose(fs);
+                    else
+                    {
+                        buf[ret] = 0;
+                        printf("Received from %d: %s\n", i, buf);
 
+                        // Xu ly yeu cau tu client
+                        process_request(i, buf);
+                    }
                 }
             }
         }
-        
     }
-    
-    fclose(f);
 
     close(listener);    
 
     return 0;
+}
+
+void process_request(int client, char *buf)
+{
+    int i = 0;
+    for (; i < num_users; i++)
+        if (users[i] == client)
+            break;
+    
+    if (i == num_users)
+    {
+        // Chua dang nhap
+        char user[32], pass[32], tmp[65], line[65];
+        int ret = sscanf(buf, "%s%s%s", user, pass, tmp);
+        if (ret == 2)
+        {
+            int found = 0;
+            sprintf(tmp, "%s %s\n", user, pass);
+            FILE *f = fopen("users.txt", "r");
+            while (fgets(line, sizeof(line), f) != NULL)
+            {
+                if (strcmp(line, tmp) == 0)
+                {
+                    found = 1;
+                    break;
+                }                    
+            }
+            fclose(f);
+
+            if (found)
+            {
+                char *msg = "Dang nhap thanh cong. Hay nhap lenh de thuc hien.\n";
+                send(client, msg, strlen(msg), 0);
+
+                users[num_users] = client;
+                num_users++;
+            }
+            else
+            {
+                char *msg = "Nhap sai tai khoan. Hay nhap lai.\n";
+                send(client, msg, strlen(msg), 0);
+            }
+        }
+        else
+        {
+            char *msg = "Nhap sai cu phap. Hay nhap lai.\n";
+            send(client, msg, strlen(msg), 0);
+        }
+    }
+    else
+    {
+        // Da dang nhap
+        char tmp[256];
+        if (buf[strlen(buf) - 1] == '\n')
+            buf[strlen(buf) - 1] = '\0';
+        sprintf(tmp, "%s > out.txt", buf);
+
+        // Thuc hien lenh
+        system(tmp);
+
+        // Tra ket qua cho client
+        FILE *f = fopen("out.txt", "rb");
+        while (!feof(f))
+        {
+            int ret = fread(tmp, 1, sizeof(tmp), f);
+            if (ret <= 0)
+                break;
+            send(client, tmp, ret, 0);
+        }
+        fclose(f);
+    }
+}
+
+void remove_user(int client)
+{
+    int i = 0;
+    for (; i < num_users; i++)
+        if (users[i] == client)
+            break;
+    
+    if (i < num_users)
+    {
+        if (i < num_users - 1)
+            users[i] = users[num_users - 1];
+        num_users--;
+    }
 }
