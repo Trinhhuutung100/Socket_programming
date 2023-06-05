@@ -1,0 +1,2 @@
+
+        fprintf(f, "%s", buf);

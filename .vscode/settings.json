@@ -1,0 +1,12 @@
+{
+    "C_Cpp.errorSquiggles": "enabled",
+    "files.associations": {
+        "tcp_client": "c",
+        "inet.h": "c",
+        "random": "c",
+        "stdio.h": "c",
+        "netdb.h": "c",
+        "unistd.h": "c",
+        "socket.h": "c"
+    }
+}
